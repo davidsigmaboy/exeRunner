@@ -1,0 +1,30 @@
+name: Core tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build core and run test exe (interpreter)
+        run: make test
+
+      - name: Type-check the ARM64 JIT path
+        if: runner.arch == 'X64'
+        run: make check-jit
+
+      - name: Run test exe with the JIT (native ARM64 only)
+        if: runner.arch == 'ARM64'
+        run: |
+          ./build/erc build/hello.exe --jit | tee jit.out
+          grep -q "Hello from x86!" jit.out
+          grep -q "jit on" jit.out

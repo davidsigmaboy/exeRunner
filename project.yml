@@ -1,0 +1,34 @@
+name: ExeRunner
+options:
+  bundleIdPrefix: dev.exerunner
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  ExeRunner:
+    type: application
+    platform: iOS
+    sources:
+      - ExeRunner
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.exerunner.app
+        SWIFT_VERSION: "5.9"
+        SWIFT_OBJC_BRIDGING_HEADER: ExeRunner/Core/ExeRunner-Bridging-Header.h
+        GCC_OPTIMIZATION_LEVEL: "3"
+        GCC_C_LANGUAGE_STANDARD: gnu11
+        ENABLE_BITCODE: NO
+    info:
+      path: ExeRunner/Info.plist
+      properties:
+        CFBundleDisplayName: ExeRunner
+        UILaunchScreen: {}
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+    entitlements:
+      path: ExeRunner/ExeRunner.entitlements
+      properties:
+        # Lets a debugger attach (this is what JIT enablers rely on).
+        com.apple.security.get-task-allow: true
+        # Needed to reserve the 4 GiB guest window and to have room for guest memory.
+        com.apple.developer.kernel.extended-virtual-addressing: true
+        com.apple.developer.kernel.increased-memory-limit: true

@@ -1,0 +1,7 @@
+build/
+*.xcodeproj
+ExeRunner/Info.plist
+ExeRunner/ExeRunner.entitlements
+.DS_Store
+xcuserdata/
+DerivedData/
