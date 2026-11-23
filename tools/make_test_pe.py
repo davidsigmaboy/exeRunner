@@ -50,6 +50,10 @@ def build(path):
     c += b"\x49"                                 # 9   dec ecx
     c += b"\x75" + struct.pack("<b", loop - (len(c) + 2))   # jnz loop
     c += b"\x89\xC7"                             #     mov edi,eax
+    c += b"\x64\x8B\x05" + struct.pack("<I", 0x30)  #   mov eax,fs:[0x30]   (PEB)
+    c += b"\x8B\x40\x08"                         #     mov eax,[eax+8]     (ImageBaseAddress)
+    c += b"\x2D" + struct.pack("<I", IMAGE_BASE) #     sub eax,IMAGE_BASE  (-> 0)
+    c += b"\x01\xC7"                             #     add edi,eax
     call_at = len(c)
     c += b"\xE8" + b"\0\0\0\0"                   #     call func (patched below)
     c += b"\x6A\xF5"                             #     push -11

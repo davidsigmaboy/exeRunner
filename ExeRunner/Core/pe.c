@@ -15,7 +15,7 @@ static int range_free(Machine *m, uint32_t base, uint32_t size) {
     if (base < 0x00020000u) return 0;
     if ((uint64_t)base + size > m->arena_size) return 0;
     if (overlaps(base, size, HEAP_BASE, HEAP_LIMIT - HEAP_BASE)) return 0;
-    if (overlaps(base, size, STACK_TOP - STACK_SIZE - 0x10000u, STACK_SIZE + 0x11000u)) return 0;
+    if (overlaps(base, size, TEB_BASE, STACK_TOP + 0x1000u - TEB_BASE)) return 0;
     return 1;
 }
 
@@ -136,6 +136,7 @@ int pe_load(Machine *m, const uint8_t *f, size_t n, char *err, size_t err_len) {
     }
 
     m->image_base = base;
+    mem_w32(m, PEB_BASE + 8, base);                         /* PEB.ImageBaseAddress */
     m->image_size = isize;
     m->entry = base + entry_rva;
 
@@ -145,6 +146,21 @@ int pe_load(Machine *m, const uint8_t *f, size_t n, char *err, size_t err_len) {
     mem_w32(m, esp, shim_resolve(m, "kernel32.dll", "ExitProcess"));
     m->cpu.r[R_ESP] = esp;
     m->cpu.eip = m->entry;
+
+    /* report every import we cannot satisfy up front, not just the first one hit at run time */
+    {
+        char list[1536] = "";
+        size_t o = 0;
+        unsigned cnt = 0;
+        for (uint32_t i = 0; i < m->thunk_count; i++) {
+            if (m->thunks[i]) continue;
+            cnt++;
+            int w = snprintf(list + o, sizeof list - o, "  %s\n", m->thunk_label[i]);
+            if (w < 0 || o + (size_t)w >= sizeof list) { list[o] = 0; continue; }
+            o += (size_t)w;
+        }
+        if (cnt) er_log(m, "[load] %u imports are not implemented yet:\n%s", cnt, list);
+    }
     m->loaded = 1;
     return 0;
 }

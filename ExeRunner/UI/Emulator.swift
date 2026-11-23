@@ -16,6 +16,7 @@ final class Emulator: ObservableObject {
     @Published var fileName: String?
     @Published var useJIT = true
     @Published var jitWasActive = false
+    @Published var hasRun = false
 
     /// True when this process can currently execute generated code (a JIT enabler / debugger is attached).
     var jitAvailable: Bool { er_jit_available() != 0 }
@@ -83,6 +84,7 @@ final class Emulator: ObservableObject {
         DispatchQueue.main.async {
             self.status = status
             self.jitWasActive = jit
+            self.hasRun = true
             self.isRunning = false
         }
     }

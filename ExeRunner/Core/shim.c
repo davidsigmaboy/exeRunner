@@ -180,6 +180,86 @@ static uint32_t c_free(Machine *m)   { (void)m; return 0; }
 static uint32_t c_strlen(Machine *m) { const char *s = gstr(m, A(m, 0)); return s ? (uint32_t)strlen(s) : 0; }
 static uint32_t c_exit(Machine *m)   { m->exit_code = (int)A(m, 0); m->halted = 1; return 0; }
 
+/* ---------- more kernel32 (mostly stubs so common CRT startup code gets through) ---------- */
+
+static uint32_t k_ret0(Machine *m) { (void)m; return 0; }
+static uint32_t k_ret1(Machine *m) { (void)m; return 1; }
+static uint32_t k_GetCurrentThreadId(Machine *m) { (void)m; return 1; }
+static uint32_t k_GetCurrentProcess(Machine *m)  { (void)m; return 0xFFFFFFFFu; }
+static uint32_t k_GetCurrentThread(Machine *m)   { (void)m; return 0xFFFFFFFEu; }
+static uint32_t k_GetVersion(Machine *m)         { (void)m; return 0x0A280105u; }   /* Windows XP SP-less 5.1 build 2600 */
+static uint32_t k_GetACP(Machine *m)             { (void)m; return 1252; }
+static uint32_t k_GetFileType(Machine *m)        { (void)m; return 2; }              /* FILE_TYPE_CHAR */
+static uint32_t k_TerminateProcess(Machine *m)   { m->exit_code = (int)A(m, 1); m->halted = 1; return 0; }
+static uint32_t k_GetModuleHandleW(Machine *m)   { return A(m, 0) == 0 ? m->image_base : 0; }
+static uint32_t k_HeapCreate(Machine *m)         { (void)m; return 0x2000; }
+
+static uint32_t k_HeapReAlloc(Machine *m) {
+    uint32_t old = A(m, 2), size = A(m, 3);
+    uint32_t p = guest_alloc(m, size, 16);
+    if (p && old && mem_ok(m, old, size)) memmove(m->cpu.mem + p, m->cpu.mem + old, size);
+    return p;
+}
+static uint32_t k_GetStartupInfoA(Machine *m) {
+    uint32_t p = A(m, 0);
+    if (mem_ok(m, p, 68)) { memset(m->cpu.mem + p, 0, 68); mem_w32(m, p, 68); }
+    return 0;
+}
+static uint32_t k_QueryPerformanceFrequency(Machine *m) {
+    uint32_t p = A(m, 0);
+    if (!mem_ok(m, p, 8)) return 0;
+    uint64_t f = 1000000000ull;
+    memcpy(m->cpu.mem + p, &f, 8);
+    return 1;
+}
+static uint32_t k_QueryPerformanceCounter(Machine *m) {
+    uint32_t p = A(m, 0);
+    struct timespec ts;
+    if (!mem_ok(m, p, 8)) return 0;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    uint64_t t = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+    memcpy(m->cpu.mem + p, &t, 8);
+    return 1;
+}
+static uint32_t k_GetSystemTimeAsFileTime(Machine *m) {
+    uint32_t p = A(m, 0);
+    struct timespec ts;
+    if (!mem_ok(m, p, 8)) return 0;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    uint64_t t = ((uint64_t)ts.tv_sec + 11644473600ull) * 10000000ull + (uint64_t)ts.tv_nsec / 100u;
+    memcpy(m->cpu.mem + p, &t, 8);
+    return 0;
+}
+static uint32_t k_GetModuleFileNameA(Machine *m) {
+    static const char s[] = "C:\\ExeRunner.exe";
+    uint32_t p = A(m, 1), cap = A(m, 2);
+    if (!cap || !mem_ok(m, p, cap)) return 0;
+    uint32_t n = (uint32_t)sizeof s - 1;
+    if (n >= cap) n = cap - 1;
+    memcpy(m->cpu.mem + p, s, n);
+    m->cpu.mem[p + n] = 0;
+    return n;
+}
+static uint32_t k_GetEnvironmentStringsA(Machine *m) { return guest_alloc(m, 4, 16); }   /* empty block: two NULs */
+static uint32_t k_TlsAlloc(Machine *m)    { return m->tls_next < 64 ? m->tls_next++ : 0xFFFFFFFFu; }
+static uint32_t k_TlsGetValue(Machine *m) { uint32_t i = A(m, 0); return i < 64 ? m->tls[i] : 0; }
+static uint32_t k_TlsSetValue(Machine *m) { uint32_t i = A(m, 0); if (i >= 64) return 0; m->tls[i] = A(m, 1); return 1; }
+
+static uint32_t c_memset(Machine *m) {
+    uint32_t d = A(m, 0), n = A(m, 2);
+    if (mem_ok(m, d, n)) memset(m->cpu.mem + d, (int)A(m, 1), n);
+    return d;
+}
+static uint32_t c_memcpy(Machine *m) {
+    uint32_t d = A(m, 0), s = A(m, 1), n = A(m, 2);
+    if (mem_ok(m, d, n) && mem_ok(m, s, n)) memmove(m->cpu.mem + d, m->cpu.mem + s, n);
+    return d;
+}
+static uint32_t c_strcmp(Machine *m) {
+    const char *a = gstr(m, A(m, 0)), *b = gstr(m, A(m, 1));
+    return (a && b) ? (uint32_t)(int32_t)strcmp(a, b) : 0;
+}
+
 /* ---------- table ---------- */
 
 static const ShimEntry TABLE[] = {
@@ -208,6 +288,45 @@ static const ShimEntry TABLE[] = {
     { "strlen",             -1, c_strlen },
     { "exit",               -1, c_exit },
     { "_exit",              -1, c_exit },
+    { "memset",             -1, c_memset },
+    { "memcpy",             -1, c_memcpy },
+    { "memmove",            -1, c_memcpy },
+    { "strcmp",             -1, c_strcmp },
+
+    { "SetErrorMode",                          1, k_ret0 },
+    { "SetUnhandledExceptionFilter",           1, k_ret0 },
+    { "InitializeCriticalSection",             1, k_ret0 },
+    { "InitializeCriticalSectionAndSpinCount", 2, k_ret1 },
+    { "EnterCriticalSection",                  1, k_ret0 },
+    { "LeaveCriticalSection",                  1, k_ret0 },
+    { "DeleteCriticalSection",                 1, k_ret0 },
+    { "IsDebuggerPresent",                     0, k_ret0 },
+    { "SetConsoleCtrlHandler",                 2, k_ret1 },
+    { "LoadLibraryA",                          1, k_ret0 },
+    { "GetProcAddress",                        2, k_ret0 },
+    { "FreeLibrary",                           1, k_ret1 },
+    { "HeapDestroy",                           1, k_ret1 },
+    { "FreeEnvironmentStringsA",               1, k_ret1 },
+    { "TlsFree",                               1, k_ret1 },
+    { "GetCurrentThreadId",                    0, k_GetCurrentThreadId },
+    { "GetCurrentProcess",                     0, k_GetCurrentProcess },
+    { "GetCurrentThread",                      0, k_GetCurrentThread },
+    { "GetVersion",                            0, k_GetVersion },
+    { "GetACP",                                0, k_GetACP },
+    { "GetFileType",                           1, k_GetFileType },
+    { "TerminateProcess",                      2, k_TerminateProcess },
+    { "GetModuleHandleW",                      1, k_GetModuleHandleW },
+    { "HeapCreate",                            3, k_HeapCreate },
+    { "HeapReAlloc",                           4, k_HeapReAlloc },
+    { "GetStartupInfoA",                       1, k_GetStartupInfoA },
+    { "QueryPerformanceFrequency",             1, k_QueryPerformanceFrequency },
+    { "QueryPerformanceCounter",               1, k_QueryPerformanceCounter },
+    { "GetSystemTimeAsFileTime",               1, k_GetSystemTimeAsFileTime },
+    { "GetModuleFileNameA",                    3, k_GetModuleFileNameA },
+    { "GetEnvironmentStringsA",                0, k_GetEnvironmentStringsA },
+    { "TlsAlloc",                              0, k_TlsAlloc },
+    { "TlsGetValue",                           1, k_TlsGetValue },
+    { "TlsSetValue",                           2, k_TlsSetValue },
 };
 
 uint32_t shim_resolve(Machine *m, const char *dll, const char *name) {

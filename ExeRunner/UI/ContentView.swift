@@ -36,13 +36,16 @@ struct ContentView: View {
 
     private var jitColor: Color {
         if !emu.useJIT { return .gray }
-        return emu.jitAvailable ? .green : .orange
+        if !emu.jitAvailable { return .orange }
+        if emu.hasRun && !emu.jitWasActive { return .orange }
+        return .green
     }
 
     private var jitText: String {
         if !emu.useJIT { return "Interpreter only" }
-        if emu.jitAvailable { return "JIT enabled" }
-        return "JIT not enabled for this process – attach a JIT enabler; falling back to the interpreter"
+        if !emu.jitAvailable { return "JIT not enabled for this process – attach a JIT enabler; using the interpreter" }
+        if emu.hasRun { return emu.jitWasActive ? "JIT running" : "JIT available but not used (see console)" }
+        return "JIT available"
     }
 
     private var console: some View {

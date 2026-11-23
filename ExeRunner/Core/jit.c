@@ -10,8 +10,10 @@
      MAX_INSNS. It returns the next guest EIP in w0; the dispatcher in cpu.c does
      the rest. Unsupported instructions simply run in the interpreter, so the
      two engines can be mixed freely at block boundaries.
-   - Guest pointers are used as 32-bit offsets from x20, which is why the JIT needs
-     the full 4 GiB reservation (see mem.c). Unmapped accesses fault on the host. */
+   - Guest pointers are used as 32-bit offsets from x20. With a full 4 GiB window
+     that needs no checks; with a smaller window (iPhones usually grant ~1 GiB) every
+     address is first masked into the window (Em.mask). Unmapped accesses fault on
+     the host. */
 
 #include "er_internal.h"
 
@@ -99,7 +101,7 @@ void jit_free(Machine *m) {
 
 /* ---------- ARM64 encoders ---------- */
 
-typedef struct { uint32_t *p, *end; } Em;
+typedef struct { uint32_t *p, *end; uint32_t mask; } Em;
 static void E(Em *e, uint32_t w) { if (e->p < e->end) *e->p++ = w; }
 
 #define OFF_R(i)   ((uint32_t)(offsetof(CpuState, r) + 4u * (unsigned)(i)))
@@ -124,6 +126,12 @@ static uint32_t a_sub_i(int rd, int rn, uint32_t imm)  { return 0x51000000u | ((
 
 /* fixed 2-instruction 32-bit constant load (the Jcc sequence relies on fixed sizes) */
 static void mov32(Em *e, int rd, uint32_t v) { E(e, a_movz(rd, v & 0xFFFFu, 0)); E(e, a_movk(rd, v >> 16, 1)); }
+
+/* dst = src, masked into the guest window when it is smaller than 4 GiB (clobbers w6) */
+static void emit_mask(Em *e, int dst, int src) {
+    if (e->mask) { mov32(e, 6, e->mask); E(e, a_and(dst, src, 6)); }
+    else if (dst != src) E(e, a_orr(dst, 31, src));         /* mov wdst, wsrc */
+}
 
 static void prologue(Em *e) {
     E(e, 0xA9800000u | ((0x7Fu & (uint32_t)-4) << 15) | (30u << 10) | (31u << 5) | 29u);   /* stp x29,x30,[sp,#-32]! */
@@ -162,9 +170,10 @@ static int mr_decode(F *f, MR *o) {
 
 /* w3 = effective address */
 static void emit_addr(Em *e, const MR *o) {
-    if (o->abs) { mov32(e, 3, (uint32_t)o->disp); return; }
+    if (o->abs) { mov32(e, 3, (uint32_t)o->disp); emit_mask(e, 3, 3); return; }
     E(e, a_ldr_ctx(3, OFF_R(o->rm)));
     if (o->disp) { mov32(e, 5, (uint32_t)o->disp); E(e, a_add(3, 3, 5)); }
+    emit_mask(e, 3, 3);
 }
 
 /* w2 = a, w3 = b on entry. aop: 0 add,1 or,4 and,5 sub,6 xor,7 cmp. dst<0 => no write-back. */
@@ -189,6 +198,7 @@ static void emit_push_w3(Em *e) {
     E(e, a_ldr_ctx(2, OFF_R(R_ESP)));
     E(e, a_sub_i(2, 2, 4));
     E(e, a_str_ctx(2, OFF_R(R_ESP)));
+    emit_mask(e, 2, 2);
     E(e, a_str_mem(3, 2));
 }
 
@@ -238,7 +248,8 @@ static int xlate_one(Machine *m, Em *e, uint32_t pc, uint32_t *next) {
     }
     if (op >= 0x58 && op <= 0x5F) {                         /* pop r32 */
         E(e, a_ldr_ctx(2, OFF_R(R_ESP)));
-        E(e, a_ldr_mem(3, 2));
+        emit_mask(e, 7, 2);
+        E(e, a_ldr_mem(3, 7));
         E(e, a_add_i(2, 2, 4));
         E(e, a_str_ctx(2, OFF_R(R_ESP)));
         E(e, a_str_ctx(3, OFF_R(op & 7)));                  /* after esp update: pop esp keeps popped value */
@@ -318,7 +329,8 @@ static int xlate_one(Machine *m, Em *e, uint32_t pc, uint32_t *next) {
         if (op == 0xC2) { imm = fb(&f); imm |= fb(&f) << 8; }
         if (f.bad) return 0;
         E(e, a_ldr_ctx(2, OFF_R(R_ESP)));
-        E(e, a_ldr_mem(0, 2));
+        emit_mask(e, 7, 2);
+        E(e, a_ldr_mem(0, 7));
         E(e, a_add_i(2, 2, 4));
         if (imm) { mov32(e, 3, imm); E(e, a_add(2, 2, 3)); }
         E(e, a_str_ctx(2, OFF_R(R_ESP)));
@@ -341,7 +353,8 @@ static int xlate_one(Machine *m, Em *e, uint32_t pc, uint32_t *next) {
 }
 
 static jit_fn translate(Machine *m, struct JitState *j, uint32_t eip) {
-    Em e = { j->code + j->used_words, j->code + j->cap_words };
+    Em e = { j->code + j->used_words, j->code + j->cap_words,
+             m->arena_size >= 0x100000000ull ? 0u : (uint32_t)(m->arena_size - 1) };
     uint32_t *start = e.p;
     prologue(&e);
 

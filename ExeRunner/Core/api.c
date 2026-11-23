@@ -30,6 +30,19 @@ Machine *er_create(er_output_cb cb, void *user) {
         free(m);
         return NULL;
     }
+    if (mem_commit(m, TEB_BASE, 0x2000) != 0) {
+        mem_release(m);
+        free(m);
+        return NULL;
+    }
+    /* minimal TEB / PEB so fs:[0x30] style CRT startup code works */
+    mem_w32(m, TEB_BASE + 0x00, 0xFFFFFFFFu);               /* SEH chain: end of list */
+    mem_w32(m, TEB_BASE + 0x04, STACK_TOP);                 /* stack base  */
+    mem_w32(m, TEB_BASE + 0x08, STACK_TOP - STACK_SIZE);    /* stack limit */
+    mem_w32(m, TEB_BASE + 0x18, TEB_BASE);                  /* self        */
+    mem_w32(m, TEB_BASE + 0x20, 1234);                      /* process id  */
+    mem_w32(m, TEB_BASE + 0x24, 1);                         /* thread id   */
+    mem_w32(m, TEB_BASE + 0x30, PEB_BASE);                  /* PEB         */
     m->heap_brk = m->heap_committed = HEAP_BASE;
     return m;
 }
@@ -51,10 +64,7 @@ int er_run(Machine *m, int use_jit) {
     if (!m || !m->loaded) return -1;
     m->use_jit = 0;
     if (use_jit) {
-        if (m->arena_size < 0x100000000ull)
-            er_log(m, "[jit] only a %u MiB guest window was available; using interpreter\n",
-                   (unsigned)(m->arena_size >> 20));
-        else if (!jit_supported())
+        if (!jit_supported())
             er_log(m, "[jit] not enabled for this process; using interpreter\n");
         else if (jit_init(m) != 0)
             er_log(m, "[jit] could not allocate code memory; using interpreter\n");

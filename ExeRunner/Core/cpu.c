@@ -44,7 +44,7 @@ uint32_t cpu_eval_cond(const CpuState *c, unsigned cc) {
 
 /* ---------- decoding helpers ---------- */
 
-typedef struct { Machine *m; uint32_t pc; int bad; } Dec;
+typedef struct { Machine *m; uint32_t pc; int bad; uint32_t seg; } Dec;
 typedef struct { int isreg; int reg; uint32_t addr; } Op;
 
 static uint32_t f8(Dec *d)  { uint32_t v = 0; if (!mem_r8(d->m, d->pc, &v))  d->bad = 1; d->pc += 1; return v; }
@@ -70,7 +70,7 @@ static int modrm(Dec *d, int *regf, Op *o) {
     }
     if (mod == 1) addr += (uint32_t)(int32_t)(int8_t)f8(d);
     else if (mod == 2) addr += f32(d);
-    o->addr = addr;
+    o->addr = addr + d->seg;
     return !d->bad;
 }
 
@@ -133,8 +133,9 @@ static void fault(Machine *m, const char *why, uint32_t eip, unsigned op) {
 static void step(Machine *m) {
     CpuState *c = &m->cpu;
     uint32_t start = c->eip;
-    Dec d = { m, start, 0 };
+    Dec d = { m, start, 0, 0 };
     unsigned op = f8(&d);
+    if (op == 0x64) { d.seg = TEB_BASE; op = f8(&d); }      /* fs: override */
     if (d.bad) MEMFAULT();
 
     if (op >= 0x40 && op <= 0x4F) {                         /* inc/dec r32 */

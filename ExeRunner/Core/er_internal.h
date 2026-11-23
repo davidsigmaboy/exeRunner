@@ -32,6 +32,8 @@ typedef struct CpuState {
 #define HEAP_LIMIT    0x18000000u
 #define STACK_TOP     0x1FF00000u
 #define STACK_SIZE    0x00100000u
+#define TEB_BASE      0x1FD00000u   /* fs:[0] points here */
+#define PEB_BASE      0x1FD01000u
 
 typedef struct ShimEntry ShimEntry;
 struct JitState;
@@ -59,6 +61,7 @@ struct Machine {
     uint32_t heap_brk, heap_committed;
     uint32_t last_error;
     uint32_t cmdline_addr;
+    uint32_t tls[64], tls_next;
 
     struct JitState *jit;
 };

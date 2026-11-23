@@ -28,3 +28,10 @@ jobs:
           ./build/erc build/hello.exe --jit | tee jit.out
           grep -q "Hello from x86!" jit.out
           grep -q "jit on" jit.out
+
+      - name: Run test exe with the JIT in a 1 GiB window (masked addressing, like an iPhone)
+        if: runner.arch == 'ARM64'
+        run: |
+          ER_ARENA_MB=1024 ./build/erc build/hello.exe --jit | tee jit1g.out
+          grep -q "Hello from x86!" jit1g.out
+          grep -q "jit on" jit1g.out

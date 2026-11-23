@@ -15,7 +15,11 @@ int mem_reserve(Machine *m) {
     /* A full 4 GiB window means every 32-bit guest pointer is valid (or faults)
        with no bounds checks in JIT code. Smaller windows work for the interpreter only. */
     static const uint64_t sizes[] = { 0x100000000ull, 0x80000000ull, 0x40000000ull, 0x20000000ull };
+    /* ER_ARENA_MB=1024 (or 512/2048) forces a smaller window; CI uses it to test masked JIT. */
+    const char *env = getenv("ER_ARENA_MB");
+    uint64_t forced = env ? ((uint64_t)strtoull(env, NULL, 10) << 20) : 0;
     for (size_t i = 0; i < sizeof sizes / sizeof sizes[0]; i++) {
+        if (forced && sizes[i] != forced) continue;
         if (sizes[i] > (uint64_t)SIZE_MAX) continue;
         void *p = mmap(NULL, (size_t)sizes[i], PROT_NONE,
                        MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
